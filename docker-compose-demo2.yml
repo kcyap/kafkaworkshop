@@ -1,0 +1,191 @@
+version: '3.4'
+
+services:
+  schema-registry:
+    image: confluentinc/cp-schema-registry:6.2.0
+    hostname: schema-registry
+    container_name: schema-registry
+    depends_on:
+      - broker
+    ports:
+      - 8081:8081
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'broker:29092'        
+      SCHEMA_REGISTRY_DEBUG: "true"
+    networks:
+      - kafka_network
+      - kafka_connect       
+
+  connect:
+    image: docker.io/library/kafka-connect:latest
+    build:
+      context: ./kafka-connect
+      dockerfile: Dockerfile
+    hostname: connect
+    container_name: connect
+    depends_on:
+      - broker
+      - schema-registry
+      - mssql
+      - mssql-sink
+    ports:
+      - 8083:8083
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'broker:29092'
+      CONNECT_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: compose-connect-group
+      CONNECT_PRODUCER_CLIENT_ID: "compose-connect-producer"
+
+      CONNECT_CONFIG_STORAGE_TOPIC: docker-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: docker-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: docker-connect-status
+        
+      CONNECT_REPLICATION_FACTOR: 1
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_FLUSH_INTERVAL_MS: 50000
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      CONNECT_CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY: "All" 
+
+      CONNECT_LOG4J_ROOT_LOGLEVEL: "ERROR"
+      CONNECT_LOG4J_LOGGERS: "org.apache.kafka.connect.runtime.rest=WARN,org.reflections=ERROR"
+      # CONNECT_LOG4J_LOGGERS: org.apache.zookeeper=ERROR,org.I0Itec.zkclient=ERROR,org.reflections=ERROR
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components,/local-connect-jars"
+
+      # Reduce Connect memory utilization
+      KAFKA_JVM_PERFORMANCE_OPTS: -server -XX:+UseG1GC -XX:GCTimeRatio=1
+        -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=20
+        -XX:MaxGCPauseMillis=10000 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent
+        -XX:MaxInlineLevel=15 -Djava.awt.headless=true
+    volumes:
+      - ./assets/kafka-connect-jars:/local-connect-jars
+      - ./logs/kafka-connect:/tmp
+    networks:
+      - kafka_network
+      - kafka_connect
+  
+  mssql:
+    # *-----------------------------*
+    # To connect to the DB: 
+    #   docker exec -it mssql bash -c '/opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -U sa -P $SA_PASSWORD'
+    # *-----------------------------*
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    hostname: dbserver
+    container_name: dbserver
+    ports: 
+      - 1433:1433
+    environment: 
+      - SA_PASSWORD=H@llow0rld
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Standard
+      - MSSQL_AGENT_ENABLED=true
+      - MSSQL_TCP_PORT=1433
+    volumes:
+      - ./data/mssql:/scripts
+    command:
+      - /bin/bash
+      - -c
+      - |
+        # Launch MSSQL and send to background
+        /opt/mssql/bin/sqlservr &
+        pid=$$!
+        # Wait for it to be available
+        echo "Waiting for MS SQL to be available ⏳"
+        /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "SET NOCOUNT ON SELECT \"YAY WE ARE UP\" , @@servername"
+        is_up=$$?
+        while [ $$is_up -ne 0 ] ; do
+          echo -e $$(date)
+          /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "SET NOCOUNT ON SELECT \"YAY WE ARE UP\" , @@servername"
+          is_up=$$?
+          sleep 5
+        done
+
+        # echo "Create Developer DB"
+        /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "CREATE DATABASE DeveloperDb"
+
+        # Run every sql script in /scripts
+        for sqlscript in /scripts/*.sql
+          do /opt/mssql-tools/bin/sqlcmd -U sa -P $$SA_PASSWORD -l 30 -e -i $$sqlscript
+        done
+
+        echo "All scripts have been executed. Waiting for MS SQL(pid $$pid) to terminate."
+        # Wait on the sqlserver process
+        wait $$pid
+    networks:
+      - kafka_connect 
+
+  mssql-sink:
+    # *-----------------------------*
+    # To connect to the DB: 
+    #   docker exec -it mssql bash -c '/opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -U sa -P $SA_PASSWORD'
+    # *-----------------------------*
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    hostname: mssql-sink
+    container_name: mssql-sink
+    ports: 
+      - 5019:1433
+    environment: 
+      - SA_PASSWORD=H@llow0rld
+      - ACCEPT_EULA=Y
+      - MSSQL_PID=Standard
+      - MSSQL_AGENT_ENABLED=true
+      - MSSQL_TCP_PORT=1433
+    command:
+      - /bin/bash
+      - -c
+      - |
+        # Launch MSSQL and send to background
+        /opt/mssql/bin/sqlservr &
+        pid=$$!
+        # Wait for it to be available
+        echo "Waiting for MS SQL to be available ⏳"
+        /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "SET NOCOUNT ON SELECT \"YAY WE ARE UP\" , @@servername"
+        is_up=$$?
+        while [ $$is_up -ne 0 ] ; do
+          echo -e $$(date)
+          /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "SET NOCOUNT ON SELECT \"YAY WE ARE UP\" , @@servername"
+          is_up=$$?
+          sleep 5
+        done
+
+        echo "Create demo DB"
+        /opt/mssql-tools/bin/sqlcmd -l 30 -S localhost -h-1 -V1 -U sa -P $$SA_PASSWORD -Q "CREATE DATABASE demo"
+          
+        echo "All scripts have been executed. Waiting for MS SQL(pid $$pid) to terminate."
+        # Wait on the sqlserver process
+        wait $$pid
+    networks:
+      - kafka_connect 
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    hostname: kafdrop
+    container_name: kafdrop
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: 'broker:29092'
+      SCHEMAREGISTRY_CONNECT: http://schema-registry:8081
+      JVM_OPTS: "-Xms16M -Xmx48M -Xss180K -XX:-TieredCompilation -XX:+UseStringDeduplication -noverify"
+    networks:
+      - kafka_network
+      - kafka_connect
+
+networks:
+  kafka_network:
+    external: true
+  kafka_connect:
+    name: kafka_connect_network
+    driver: bridge

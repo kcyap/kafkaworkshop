@@ -1,0 +1,1 @@
+docker run -it --network kafka_network bitnami/kafka:latest kafka-topics.sh --zookeeper zookeeper:2181 --describe --topic amazingtopic
