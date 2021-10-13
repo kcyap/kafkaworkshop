@@ -1,0 +1,24 @@
+{
+    "name": "DeveloperDb-sink",
+    "config": {
+        "name": "DeveloperDb-sink",
+        "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+        "tasks.max": "1",
+        "topics": "avro.dbo.ORDERS",
+        "table.name.format": "ORDERS",
+        "auto.evolve": "true",
+        "auto.create": "true",
+        "transforms": "unwrap,order_ts_converter",
+        "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        "transforms.unwrap.drop.deletes": "false",
+        "transforms.unwrap.drop.tombstones": "false",
+        "transforms.order_ts_converter.target.type": "Timestamp",
+        "transforms.order_ts_converter.type": "org.apache.kafka.connect.transforms.TimestampConverter$Value",
+        "transforms.order_ts_converter.field": "order_ts",
+        "connection.url": "jdbc:sqlserver://mssql-sink:1433;databaseName=demo;user=sa;password=H@llow0rld;useUnicode=true;characterEncoding=UTF-8",
+        "insert.mode": "upsert",
+        "pk.mode": "record_key",
+        "pk.fields": "order_id",
+        "delete.enabled": "true"
+    }
+}

@@ -19,7 +19,7 @@ services:
       - kafka_connect       
 
   connect:
-    image: docker.io/library/kafka-connect:latest
+    image: docker.io/library/kafka-connect:6.2.1
     build:
       context: ./kafka-connect
       dockerfile: Dockerfile

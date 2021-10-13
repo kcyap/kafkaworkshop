@@ -1,0 +1,30 @@
+{
+    "name": "orders-avro-source",
+    "config": {
+        "name": "orders-avro-source",
+        "connector.class": "io.debezium.connector.sqlserver.SqlServerConnector",
+        "tasks.max": "1",
+        "database.server.name": "avro",
+        "database.hostname": "dbserver",
+        "database.port": "1433",
+        "database.user": "sa",
+        "database.password": "H@llow0rld",
+        "database.dbname": "DeveloperDb",
+        "database.history.kafka.topic": "schemahistory.DeveloperDb",
+        "database.history.kafka.bootstrap.servers": "broker:29092",
+        "key.converter.schemas.enable": "true",
+        "key.converter.schema.registry.url": "http://schema-registry:8081",
+        "value.converter.schemas.enable": "true",
+        "value.converter.schema.registry.url": "http://schema-registry:8081",
+        "table.include.list": "dbo.ORDERS",
+        "transforms": "unwrap",
+        "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+        "transforms.unwrap.add.header": "true",
+        "transforms.unwrap.drop.tombstones": "false",
+        "transforms.unwrap.delete.handling.mode": "none",
+        "transforms.unwrap.tombstones.on.delete": "false",
+        "include.schema.changes": "true",
+        "tombstones.on.delete": "false",
+        "snapshot.mode": "initial"
+    }
+}
